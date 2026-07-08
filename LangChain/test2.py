@@ -1,4 +1,4 @@
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from typing_extensions import Annotated
@@ -39,6 +39,7 @@ model_with_tools = model.bind_tools(tools=[add, multiply])
 
 # 第三步：两轮对话完成"工具调用 + 自然语言回答"
 messages = [
+    SystemMessage("你是一个数学专家。你精通乘法与加法。"),
     HumanMessage("3乘4等于多少？3加4又等于多少？")
 ]
 
@@ -71,3 +72,31 @@ for tool_call in ai_msg.tool_calls:
 # --- 第 2 轮：模型根据工具结果，组织自然语言回答 ---
 # 用裸 model，不需要再调工具，纯做文本生成
 print(model.invoke(messages).content)
+
+
+
+# 可以直接使用现成的工具，而不需要自己去自定义工具
+from langchain_tavily import TavilySearch #这个工具是用来搜索天气的
+search_model=ChatOpenAI(
+    model="deepseek-v4-flash",
+    temperature=0,
+    api_key="YOUR_DEEPSEEK_API_KEY",
+    base_url="https://api.deepseek.com/v1",
+)
+# 定义消息列表
+search_msg = [
+    SystemMessage("你是一个有帮助的助手。"),
+    HumanMessage("请帮我搜索一下北京的天气情况。")
+]
+
+# 定义、绑定工具
+tool = TavilySearch(max_results=10, tavily_api_key="YOUR_TAVILY_API_KEY")
+model_with_tools = search_model.bind_tools(tools=[tool])
+ai_msg = model_with_tools.invoke(input=search_msg)
+search_msg.append(ai_msg)
+
+for tool_call in ai_msg.tool_calls:
+    tool_msg = tool.invoke(tool_call)
+    search_msg.append(tool_msg)
+
+print(search_model.invoke(search_msg).content)

@@ -65,6 +65,7 @@ calc_tool = StructuredTool.from_function(
     response_format="content_and_artifact"  # 关键配置
 )
 
+# 这是一个工具调用示例，模拟模型调用工具的过程
 print(calc_tool.invoke(
     {
         "name":"multiply",
