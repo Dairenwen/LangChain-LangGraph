@@ -1,7 +1,15 @@
+# LangSmith 环境变量必须在所有 LangChain import 之前设置
+import os
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_API_KEY"] = "YOUR_LANGSMITH_API_KEY"
+os.environ["LANGCHAIN_PROJECT"] = "LangChain-Learning"
+
+
 # 这里来学习流式传输
-from typing import AsyncIterator, List
+from typing import AsyncIterator
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
+
 
 model = ChatOpenAI(
     model="gpt-5.4",
@@ -12,7 +20,7 @@ model = ChatOpenAI(
 
 # 返回一个迭代器，产生的消息块
 # for chunk in model.stream("写一个小作文"):
-#     # 每一个chunk都是AImessagechunk类型，消息块可以相加
+#     # 每一个chunk都是AIMessageChunk类型，消息块可以相加
 #     print(chunk.content,end="",flush=True)
 
 # 异步传输
@@ -63,4 +71,21 @@ async def stream_joke():
         print(chunk, end="|", flush=True)
 
 asyncio.run(stream_joke())
+
+# 消息内置方法演示
+from langchain_core.messages import HumanMessage, SystemMessage
+
+msg = HumanMessage(content="你好，今天天气怎么样？")
+sys_msg = SystemMessage(content="你是一个有帮助的助手。")
+
+# 1. pretty_print() → 终端里带颜色、格式化打印消息，方便调试
+msg.pretty_print()
+sys_msg.pretty_print()
+
+# 2. pretty_repr() → 返回格式化的字符串（不直接打印），html=True 可生成 HTML
+print(msg.pretty_repr())         # 普通文本格式的漂亮表示
+print(msg.pretty_repr(html=True))# HTML 格式的漂亮表示
+
+# 3. text() → 直接取消息的纯文本内容（等同于 .content，但更语义化）
+print(msg.text())                # 输出: 你好，今天天气怎么样？
 
