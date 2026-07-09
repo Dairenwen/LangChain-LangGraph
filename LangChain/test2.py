@@ -1,3 +1,7 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -28,7 +32,7 @@ def multiply(
 model = ChatOpenAI(
     model="deepseek-v4-flash",
     temperature=0,
-    api_key="YOUR_DEEPSEEK_API_KEY",
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
     base_url="https://api.deepseek.com/v1",
 )
 
@@ -80,7 +84,7 @@ from langchain_tavily import TavilySearch #这个工具是用来搜索天气的
 search_model=ChatOpenAI(
     model="deepseek-v4-flash",
     temperature=0,
-    api_key="YOUR_DEEPSEEK_API_KEY",
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
     base_url="https://api.deepseek.com/v1",
 )
 # 定义消息列表
@@ -90,7 +94,7 @@ search_msg = [
 ]
 
 # 定义、绑定工具
-tool = TavilySearch(max_results=10, tavily_api_key="YOUR_TAVILY_API_KEY")
+tool = TavilySearch(max_results=10, tavily_api_key=os.getenv("TAVILY_API_KEY"))
 model_with_tools = search_model.bind_tools(tools=[tool])
 ai_msg = model_with_tools.invoke(input=search_msg)
 search_msg.append(ai_msg)

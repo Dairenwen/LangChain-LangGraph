@@ -1,7 +1,9 @@
 # LangSmith 环境变量必须在所有 LangChain import 之前设置
 import os
+from dotenv import load_dotenv
+load_dotenv()  # 自动加载项目根目录的 .env 文件
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_API_KEY"] = "YOUR_LANGSMITH_API_KEY"
+os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGSMITH_API_KEY")
 os.environ["LANGCHAIN_PROJECT"] = "LangChain-Learning"
 
 
@@ -14,7 +16,7 @@ from langchain_openai import ChatOpenAI
 model = ChatOpenAI(
     model="gpt-5.4",
     temperature=0,
-    api_key="YOUR_PACKYAPI_API_KEY",
+    api_key=os.getenv("PACKYAPI_API_KEY"),
     base_url="https://www.packyapi.com/v1",
 )
 

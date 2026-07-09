@@ -1,19 +1,17 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()  # 自动加载项目根目录的 .env 文件
+
 from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, trim_messages, filter_messages, \
     merge_message_runs
 from langchain_core.runnables import RunnableWithMessageHistory
 from langchain_openai import ChatOpenAI
 
-# model = ChatOpenAI(
-#     model="qwen3.6-27b-base",
-#     temperature=0,
-#     api_key="not-needed",
-#     base_url="http://192.168.247.161:8000/v1",
-# )
 model = ChatOpenAI(
     model="gpt-5.4",
     temperature=0,
-    api_key="YOUR_PACKYAPI_API_KEY",
+    api_key=os.getenv("PACKYAPI_API_KEY"),
     base_url="https://www.packyapi.com/v1",
 )
 

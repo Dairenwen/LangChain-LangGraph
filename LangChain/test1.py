@@ -1,3 +1,7 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
@@ -11,7 +15,7 @@ print(ollama_model.invoke("你是什么模型？").content) # 输出模型的回
 model = ChatOpenAI(
     model="deepseek-v4-flash",
     temperature=0, # 温度越高越发散，越低越保守
-    api_key="YOUR_DEEPSEEK_API_KEY",       # 替换成你的实际 key
+    api_key=os.getenv("DEEPSEEK_API_KEY"),       # 替换成你的实际 key
     base_url = "https://api.deepseek.com/v1",  # 替换成你的中转站地址
 )
 
@@ -36,12 +40,12 @@ print(chain.invoke(messages)) # 直接调用链，传入消息列表，返回解
 
 
 # 还可以使用init的方式来定义
-model=init_chat_model("deepseek-v4-flash",model_provider="deepseek",api_key="YOUR_DEEPSEEK_API_KEY")
+model=init_chat_model("deepseek-v4-flash",model_provider="deepseek",api_key=os.getenv("DEEPSEEK_API_KEY"))
 print(model.invoke(messages))
 
 model=init_chat_model("deepseek-v4-flash",
                       model_provider="deepseek",
-                      api_key="YOUR_DEEPSEEK_API_KEY",
+                      api_key=os.getenv("DEEPSEEK_API_KEY"),
                       temperature=0,
                       configurable_fields=["temperature"],
                       config_prefix="change")

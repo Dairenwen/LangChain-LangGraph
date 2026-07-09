@@ -1,4 +1,8 @@
 # 这里来演示，聊天模型进行工具调用的实用场景，这里演示模型绑定工具进行结构化输出的例子
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
@@ -10,7 +14,7 @@ from typing_extensions import Annotated, TypedDict, Union
 search_model = ChatOpenAI(
     model="gpt-5.4",
     temperature=0,
-    api_key="YOUR_PACKYAPI_API_KEY",
+    api_key=os.getenv("PACKYAPI_API_KEY"),
     base_url="https://www.packyapi.com/v1",
 )
 
@@ -21,7 +25,7 @@ search_msg = [
 ]
 
 # 定义、绑定工具
-tool = TavilySearch(max_results=10, tavily_api_key="YOUR_TAVILY_API_KEY")
+tool = TavilySearch(max_results=10, tavily_api_key=os.getenv("TAVILY_API_KEY"))
 model_with_tools = search_model.bind_tools(tools=[tool])
 ai_msg = model_with_tools.invoke(input=search_msg)
 search_msg.append(ai_msg)
