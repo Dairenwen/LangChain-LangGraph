@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv()  # 自动加载项目根目录的 .env 文件
 
+
 from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, trim_messages, filter_messages, \
     merge_message_runs
@@ -65,7 +66,7 @@ trimmer = trim_messages(
     strategy="last",      # 修剪策略:
                           # "last"(默认)：保留最后的消息。
                           # "first": 保留最早的消息。
-    token_counter=len,  # 传入一个函数或一个语言模型（因为语言模型有消息令牌计数方法） 如果要基于消息数量裁剪，就指定为len
+    token_counter=model,  # 传入一个函数或一个语言模型（因为语言模型有消息令牌计数方法） 如果要基于消息数量裁剪，就指定为len
     include_system=True,  # 如果想始终保留初始系统消息，可以指定 include_system=True
     allow_partial=False,  # 是否允许拆分消息的内容
     start_on="human",     # 如果需要确保我们的第一条消息（不包括系统消息）始终是特定类型，可以指定 start_on
