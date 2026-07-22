@@ -20,55 +20,55 @@ from langchain_core.messages import AnyMessage, SystemMessage, HumanMessage, AIM
 
 load_dotenv()
 
-# # 时间旅行
-# class State(TypedDict):
-#     joke: str
-#     topic : str
-#
-# model = ChatOpenAI(
-#     model="gpt-5.4",
-#     api_key=os.getenv("PACKYAPI_API_KEY"),
-#     base_url="https://www.packyapi.com/v1/",
-#     use_responses_api=True,
-#     output_version="responses/v1",
-# )
-#
-# def generate_topic(state: State):
-#     """生成笑话主题"""
-#     return {
-#         "topic": model.invoke([
-#             SystemMessage(content="你是一个笑话生成专家。"),
-#             HumanMessage(content="请帮我生成一个笑话的主题,字数控制在十个字以内")
-#         ])
-#     }
-#
-# def generate_joke(state: State):
-#     """生成笑话"""
-#     return {
-#         "joke": model.invoke([
-#             SystemMessage(content="你是一个笑话生成专家。"),
-#             HumanMessage(content=f"请帮我生成一个关于{state['topic']}的笑话")
-#         ])
-#     }
-#
-# builder=StateGraph(State)
-# builder.add_sequence([generate_topic, generate_joke])
-# builder.add_edge(START,"generate_topic")
-# builder.add_edge("generate_joke",END)
-# graph=builder.compile(checkpointer=InMemorySaver())
-# config={"configurable":{"thread_id":"1"}}
-# # 1.先执行一次工作流
-# print(graph.invoke({}, config=config))
-# # 2.获取历史记录
-# states=list(graph.get_state_history(config=config))
-# print(states)
-# # 3.找到要修改的状态快照
-# update=states[1] # 取出生成topic后的状态快照，进行修改，注意最新生成的最靠前
-# print(update.values["topic"])
-# # 4.修改状态
-# new_config=graph.update_state(update.config, {"topic":"程序员的一天"})
-# # 5.使用新的状态快照进行重放
-# graph.invoke(None,new_config)
+# 时间旅行
+class State(TypedDict):
+    joke: str
+    topic : str
+
+model = ChatOpenAI(
+    model="gpt-5.4",
+    api_key=os.getenv("PACKYAPI_API_KEY"),
+    base_url="https://www.packyapi.com/v1/",
+    use_responses_api=True,
+    output_version="responses/v1",
+)
+
+def generate_topic(state: State):
+    """生成笑话主题"""
+    return {
+        "topic": model.invoke([
+            SystemMessage(content="你是一个笑话生成专家。"),
+            HumanMessage(content="请帮我生成一个笑话的主题,字数控制在十个字以内")
+        ])
+    }
+
+def generate_joke(state: State):
+    """生成笑话"""
+    return {
+        "joke": model.invoke([
+            SystemMessage(content="你是一个笑话生成专家。"),
+            HumanMessage(content=f"请帮我生成一个关于{state['topic']}的笑话")
+        ])
+    }
+
+builder=StateGraph(State)
+builder.add_sequence([generate_topic, generate_joke])
+builder.add_edge(START,"generate_topic")
+builder.add_edge("generate_joke",END)
+graph=builder.compile(checkpointer=InMemorySaver())
+config={"configurable":{"thread_id":"1"}}
+# 1.先执行一次工作流
+print(graph.invoke({}, config=config))
+# 2.获取历史记录
+states=list(graph.get_state_history(config=config))
+print(states)
+# 3.找到要修改的状态快照
+update=states[1] # 取出生成topic后的状态快照，进行修改，注意最新生成的最靠前
+print(update.values["topic"])
+# 4.修改状态
+new_config=graph.update_state(update.config, {"topic":"程序员的一天"})
+# 5.使用新的状态快照进行重放
+graph.invoke(None,new_config)
 
 # 静态运行上下文
 @dataclass
