@@ -1,4 +1,5 @@
 # 所有节点都可以获取到的State
+from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -38,3 +39,26 @@ class UserPreferences(BaseModel):
         default=None,
         description="预定过的房源列表"
     )
+
+
+class UserProfile(BaseModel):
+    """Stored per user in the LangGraph PostgreSQL-backed BaseStore.
+
+    This deliberately holds only service metadata. Login or identity data should
+    be managed by an external authentication provider, not supplied by the chat.
+    """
+
+    user_id: str
+    first_seen_at: str
+    last_seen_at: str
+    conversation_count: int = 0
+
+    @classmethod
+    def now(cls, user_id: str, first_seen_at: str | None = None, conversation_count: int = 0) -> "UserProfile":
+        timestamp = datetime.now(timezone.utc).isoformat()
+        return cls(
+            user_id=user_id,
+            first_seen_at=first_seen_at or timestamp,
+            last_seen_at=timestamp,
+            conversation_count=conversation_count,
+        )

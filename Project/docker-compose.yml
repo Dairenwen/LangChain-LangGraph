@@ -1,0 +1,103 @@
+name: wandor-rental
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: rental
+      MYSQL_USER: rental
+      MYSQL_PASSWORD: rental
+      MYSQL_ROOT_PASSWORD: root-local-only
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/mysql/init/01-house-schema.sql:/docker-entrypoint-initdb.d/01-house-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot-local-only"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  seed-houses:
+    build:
+      context: .
+      dockerfile: Dockerfile.seed
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: rental
+      DB_PASSWORD: rental
+      DB_NAME: rental
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: "no"
+
+  langgraph-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: langgraph
+      POSTGRES_USER: langgraph
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-langgraph-local-only}
+    volumes:
+      - langgraph-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langgraph -d langgraph"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  langgraph-redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      # `.env` contains model and license secrets. It is optional only so that
+      # `docker compose config` can validate a fresh checkout; the server needs
+      # the real values before it can answer requests.
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URI: postgresql://langgraph:${POSTGRES_PASSWORD:-langgraph-local-only}@langgraph-postgres:5432/langgraph?sslmode=disable
+      REDIS_URI: redis://langgraph-redis:6379/0
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: rental
+      DB_PASSWORD: rental
+      DB_NAME: rental
+    ports:
+      - "50699:8000"
+    depends_on:
+      seed-houses:
+        condition: service_completed_successfully
+      langgraph-postgres:
+        condition: service_healthy
+      langgraph-redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # The production nginx image proxies this same-origin path to backend.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        VITE_ASSISTANT_ID: ${VITE_ASSISTANT_ID:-agent}
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  mysql-data:
+  langgraph-data:
+  redis-data:

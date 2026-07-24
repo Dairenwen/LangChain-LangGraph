@@ -8,16 +8,24 @@ from dotenv import load_dotenv
 load_dotenv()
 from pydantic import BaseModel
 from typing import Optional,TypedDict
-import src.agent.common.llm
-from src.agent.common.context import ContextSchema
-from src.agent.common.store import UserPreferences
-from src.agent.state.recommend import RecommendState
+import agent.common.llm
+from agent.common.context import ContextSchema
+from agent.common.store import UserPreferences
+from agent.common.city_aliases import (
+    city_search_terms,
+    district_search_terms,
+    normalized_city_name,
+    sql_city_predicate,
+    sql_district_predicate,
+)
+from agent.common.tool_call_ids import ensure_tool_call_ids
+from agent.state.recommend import RecommendState
 from langgraph.types import interrupt,Command
 from pydantic import BaseModel, Field
-from src.agent.common.llm import model
+from agent.common.llm import model
 from langgraph.runtime import Runtime
 import uuid
-from src.agent.state.recommend import get_recommend_info
+from agent.state.recommend import get_recommend_info
 
 # 定义用户信息的数据模型(结构化输出)
 class UserInfo(BaseModel):
@@ -59,8 +67,8 @@ def collect_user_info(state:RecommendState,runtime:Runtime[ContextSchema],*,stor
     """收集用户信息，并且能够获取到用户静态上下文"""
     # 1.获取需要被解析的数据，最新的用户消息+用户的偏好数据
     user_messages=filter_messages(state["messages"],include_types="human")
-    pref=state.get("user_preference",{})
-    if pref and pref["budget_min"] and pref["budget_max"]:
+    pref=state.get("user_preferences", {})
+    if pref and pref.get("budget_min") is not None and pref.get("budget_max") is not None:
         extract_messages=[
             HumanMessage(content="用户的历史偏好信息如下："+
                          f"最低预算为：{pref["budget_min"]}，最高预算为：{pref["budget_max"]}"),
@@ -79,10 +87,22 @@ def collect_user_info(state:RecommendState,runtime:Runtime[ContextSchema],*,stor
                     如果用户提到价格范围，请分别提取最低和最高预算。
                     如果用户提到推荐几套，请提取room_count字段。"""
         )
-        return model.with_structured_output(UserInfo).invoke(system_message+messages)
+        return model.with_structured_output(UserInfo).invoke([system_message, *messages])
 
     extracted_info=extract_info(extract_messages)
-    updated_state={}
+    # 无结果后的下一轮只会包含用户新补充的条件。先继承已有条件，再由新输入覆盖，
+    # 这样“预算改为 1000-3000”不会意外丢掉上一轮已经确认的城市。
+    search_fields = (
+        "city", "city_search_terms", "district_search_terms", "budget_min", "budget_max", "district",
+        "room_type", "orientation", "room_count", "others",
+    )
+    updated_state = {
+        field: state[field]
+        for field in search_fields
+        if state.get(field) is not None
+    }
+    updated_state["recommendation_found"] = False
+    updated_state["search_cancelled"] = False
     # 更新状态函数
     def update_state(current_state:dict,info:UserInfo)->dict:
         if not info:
@@ -93,6 +113,11 @@ def collect_user_info(state:RecommendState,runtime:Runtime[ContextSchema],*,stor
             return current_state
 
     updated_state=update_state(updated_state,extracted_info)
+    # 无结果追问中“取消区域/不限区域”是控制指令，不能依赖模型恰好把它
+    # 结构化为 district；否则上一轮的区域条件会被继承回来。
+    latest_user_text = str(user_messages[-1].content).strip()
+    if "不限区域" in latest_user_text or "取消区域" in latest_user_text:
+        updated_state["district"] = "不限区域"
 
     # 3.中断咨询推荐的必须参数，如果最新的用户消息没有表明推荐城市，模糊推荐
     # 检查是否存在缺失信息
@@ -125,11 +150,25 @@ def collect_user_info(state:RecommendState,runtime:Runtime[ContextSchema],*,stor
             extracted_response_info = extract_info([user_response_msg])
             updated_state = update_state(updated_state, extracted_response_info)
 
+    if updated_state.get("city"):
+        city = updated_state["city"]
+        updated_state["city"] = normalized_city_name(city)
+        updated_state["city_search_terms"] = city_search_terms(city)
+        if updated_state.get("district"):
+            updated_state["district_search_terms"] = district_search_terms(
+                city,
+                updated_state["district"],
+            )
+
     # 4.持久化处理：更新预算，根据最新的用户喜爱更新偏好数据
     if updated_state.get("budget_min") or updated_state.get("budget_max"):
-        user_id=runtime.context.get("user_id")
-        namespace=(user_id,"perferences")
+        context = runtime.context or {}
+        user_id = context.get("user_id", "anonymous")
+        namespace=(user_id,"preferences")
         prefs_result=store.search(namespace)
+        # 兼容历史版本写入的拼写错误命名空间；一旦后续发生更新，会写回正确位置。
+        if not prefs_result:
+            prefs_result = store.search((user_id, "perferences"))
         # 新增或更新
         if len(prefs_result)==0:
             prefs=UserPreferences(
@@ -141,8 +180,9 @@ def collect_user_info(state:RecommendState,runtime:Runtime[ContextSchema],*,stor
         else:
             # 有持久化信息，判断更新，上下限更宽则更新，否则不更新
             prefs = prefs_result[0].value
-            store_min = prefs['budget_min']
-            store_max = prefs['budget_max']
+            # 用户可能只有预约记录而尚未设置过预算，读取时不能假设键一定存在。
+            store_min = prefs.get('budget_min')
+            store_max = prefs.get('budget_max')
             cur_min = updated_state.get('budget_min')
             cur_max = updated_state.get('budget_max')
             update_min = False
@@ -170,16 +210,16 @@ def collect_user_info(state:RecommendState,runtime:Runtime[ContextSchema],*,stor
             # 更新用户偏好
             updated_state['user_preferences'] = prefs
 
-        updated_state['messages'] = state['messages'] + [
-            HumanMessage(content=get_recommend_info(updated_state)) # 转为用户消息，加入历史消息
-        ]
-        # 打印日志
-        print("已收集用户信息：城市={updated_state.get('city')}，"
-              f"区域={updated_state.get('district')}，"
-              f"预算={updated_state.get('budget_min')}-{updated_state.get('budget_max')}"
-              f"房间数={updated_state.get('room_count')}")
-
-        return updated_state
+    # 无论本轮是否更新预算，都必须把当前检索条件交给后续 SQL 节点；否则在无结果
+    # 循环中用户只修改区域等条件时，节点会返回 None，流程无法继续。
+    updated_state['messages'] = state['messages'] + [
+        HumanMessage(content=get_recommend_info(updated_state))
+    ]
+    print(f"已收集用户信息：城市={updated_state.get('city')}，"
+          f"区域={updated_state.get('district')}，"
+          f"预算={updated_state.get('budget_min')}-{updated_state.get('budget_max')}，"
+          f"房间数={updated_state.get('room_count')}")
+    return updated_state
 
 
 db_user = os.getenv('DB_USER')
@@ -187,7 +227,9 @@ db_password = os.getenv('DB_PASSWORD')
 db_host = os.getenv('DB_HOST')
 db_port = os.getenv('DB_PORT')
 db_name = os.getenv('DB_NAME')
-db = SQLDatabase.from_uri(f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}")
+db = SQLDatabase.from_uri(
+    f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}?ssl_disabled=true"
+)
 
 
 # 获取数据库工具
@@ -206,28 +248,28 @@ run_query_node = ToolNode([run_query_tool], name="run_query")
 def list_table(state:RecommendState):
     # 1.调用LLM获取带有AIMessage的上下文
     tool_call={
-        "name":"sql_db_list_table",
-        "arg":{},
+        "name":"sql_db_list_tables",
+        "args":{},
         "id":"123123",
         "type":"tool_call",
     }
     # 这里直接模拟的是LLM返回的tool_call，实际强制调用这个工具
     tool_call_message=AIMessage(content="",tool_calls=[tool_call])
-    # 手动调用工具：sql_db_list_table
-    list_tables_tool=next(tool for tool in tools if tool.name == "sql_db_list_table")
+    # 手动调用工具：sql_db_list_tables
+    list_tables_tool=next(tool for tool in tools if tool.name == "sql_db_list_tables")
     tool_message=list_tables_tool.invoke(tool_call)
     # 整合结果
     response=AIMessage(content=f"可用的表为:{tool_message.content}")
     return {
-        "message":[tool_call_message,tool_message,response], # 历史消息的结构为A(t)、T、A
+        "messages":[tool_call_message,tool_message,response], # 历史消息的结构为A(t)、T、A
     }
 
 # 让 LLM 强制选择工具去查询表结构
 def call_get_schema(state:RecommendState):
     llm_with_tools=model.bind_tools([get_schema_tool],tool_choice="any") # 让模型强制选择工具进行调用
-    response=llm_with_tools.invoke(state["messages"])
+    response=ensure_tool_call_ids(llm_with_tools.invoke(state["messages"]))
     return {
-        "message":[response],
+        "messages":[response],
     }
 
 # 节点：根据输入判断是否调用查询SQL的工具
@@ -239,6 +281,23 @@ def generate_query(state: RecommendState):
     您可以按行对结果排序，以返回最感兴趣的结果。请始终将查询限制为最多{top_k}个结果。
     不要对数据库做任何SQL语句（INSERT，UPDATE，DELETE，DROP等）。
     """
+    city_predicate = sql_city_predicate(state.get("city", ""))
+    if city_predicate:
+        system_prompt += f"""
+    用户指定了城市。城市条件必须原样使用以下 SQL 谓词：
+    {city_predicate}
+    不要把城市名翻译为其它语言，也不要删除其中任一中英文候选值。
+    """
+    district_predicate = sql_district_predicate(
+        state.get("city", ""),
+        state.get("district", ""),
+    )
+    if district_predicate:
+        system_prompt += f"""
+    用户指定了区域或商圈。区域条件必须原样使用以下 SQL 谓词：
+    {district_predicate}
+    这个条件已经包含手动映射出的周边行政区，不要只使用原始商圈名称做等值比较。
+    """
     # 构建包含用户信息的系统提示
     system_message = SystemMessage(content=system_prompt.format(
         dialect=db.dialect,
@@ -247,7 +306,7 @@ def generate_query(state: RecommendState):
 
     # 在这里没有强制工具调用，可以进行调用或者直接结果
     llm_with_tools = model.bind_tools([run_query_tool])
-    response = llm_with_tools.invoke([system_message] + state["messages"])
+    response = ensure_tool_call_ids(llm_with_tools.invoke([system_message] + state["messages"]))
     return {"messages": [response]}
 
 # 检查SQL是否合法，是否能够执行正确
@@ -265,6 +324,21 @@ def check_query(state: RecommendState):
     如果存在上述任何错误，请重写查询。如果没有错误，只需复制原始查询即可。
     在运行此检查之后，您将调用适当的工具来执行查询。
     """.format(dialect=db.dialect)
+    city_predicate = sql_city_predicate(state.get("city", ""))
+    if city_predicate:
+        check_query_system_prompt += (
+            "\n用户指定的城市条件必须原样保留：\n"
+            f"{city_predicate}\n"
+        )
+    district_predicate = sql_district_predicate(
+        state.get("city", ""),
+        state.get("district", ""),
+    )
+    if district_predicate:
+        check_query_system_prompt += (
+            "\n用户指定的区域条件必须原样保留：\n"
+            f"{district_predicate}\n"
+        )
     system_message = SystemMessage(content=check_query_system_prompt)
 
     # 生成人工用户消息进行检查
@@ -273,6 +347,48 @@ def check_query(state: RecommendState):
     # 将SQL当作用户消息传入进行检查
     user_message = HumanMessage(content=tool_call["args"]["query"])
     llm_with_tools = model.bind_tools([run_query_tool], tool_choice="any") # 强制绑定执行sql工具
-    response = llm_with_tools.invoke([system_message, user_message])
+    response = ensure_tool_call_ids(llm_with_tools.invoke([system_message, user_message]))
     response.id = state["messages"][-1].id # 上一个节点决定进行调用工具，存在一个toolcall，这里强制绑定工具又有一个toolcall，这里就是在合并，为一个toolcall，符合聊天模型规范
     return {"messages": [response]}
+
+
+def query_has_listings(state: RecommendState) -> bool:
+    """判断最近一次 ``sql_db_query`` 是否确实返回了至少一条房源。"""
+    for message in reversed(state.get("messages", [])):
+        if getattr(message, "type", None) != "tool":
+            continue
+        if getattr(message, "name", None) != run_query_tool.name:
+            continue
+
+        content = message.content
+        if isinstance(content, (list, tuple, dict)):
+            return bool(content)
+
+        text = str(content or "").strip()
+        # SQLDatabase 在查询没有行时通常返回空字符串；不同驱动也可能返回 []。
+        if not text or text in {"[]", "()", "None", "null"}:
+            return False
+        # SQL 执行错误同样不能被当作“已推荐到房源”。
+        if text.casefold().startswith(("error:", "error executing", "sql error")):
+            return False
+        return True
+    return False
+
+
+def ask_for_new_criteria(state: RecommendState):
+    """没有房源时暂停图执行，收到新条件后回到推荐子图重新查询。"""
+    if query_has_listings(state):
+        return {"recommendation_found": True, "search_cancelled": False}
+
+    answer = interrupt(
+        "当前条件没有查到房源，因此不会进入预订流程。\n"
+        "请直接输入新的或放宽后的条件，我会继续查询；例如：武汉 洪山区 1000-3000 元。\n"
+        "也可以输入‘不限区域’或‘取消区域’来放宽区域。输入‘取消’可结束本次查询。"
+    )
+    if str(answer).strip() in {"取消", "结束", "退出"}:
+        return {"recommendation_found": False, "search_cancelled": True}
+    return {
+        "messages": [HumanMessage(content=str(answer))],
+        "recommendation_found": False,
+        "search_cancelled": False,
+    }
